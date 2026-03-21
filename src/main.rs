@@ -31,8 +31,11 @@ enum Commands {
         username: Option<String>,
         #[arg(long, short)]
         password: bool,
-        #[arg(long)]
+        #[arg(long, conflicts_with = "no_enter_after_password")]
         enter_after_password: bool,
+        /// Disable pressing Enter after password
+        #[arg(long, conflicts_with = "enter_after_password")]
+        no_enter_after_password: bool,
     },
 
     /// Wipe all fields from a slot
@@ -86,6 +89,7 @@ fn main() -> Result<()> {
             username,
             password,
             enter_after_password,
+            no_enter_after_password,
         } => {
             let slot_id = protocol::parse_slot(&slot)?;
             let slot_name = protocol::slot_name(slot_id);
@@ -126,9 +130,23 @@ fn main() -> Result<()> {
                 );
             }
 
-            if label.is_none() && username.is_none() && !password && !enter_after_password {
+            if no_enter_after_password {
+                let resp =
+                    commands::set_slot_field_raw(&dev, slot_id, MessageField::NextKey2, &[0])?;
+                println!(
+                    "Enter-after-password disabled for slot {}. Device: {}",
+                    slot_name, resp
+                );
+            }
+
+            if label.is_none()
+                && username.is_none()
+                && !password
+                && !enter_after_password
+                && !no_enter_after_password
+            {
                 anyhow::bail!(
-                    "Nothing to set. Use --label, --username, --password, or --enter-after-password"
+                    "Nothing to set. Use --label, --username, --password, --enter-after-password, or --no-enter-after-password"
                 );
             }
         }
