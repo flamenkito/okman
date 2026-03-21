@@ -7,8 +7,8 @@ mod protocol;
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 
+use commands::SetOptions;
 use device::OnlyKeyDevice;
-use protocol::MessageField;
 
 #[derive(Parser)]
 #[command(name = "okman", version, about = "Manage OnlyKey slot passwords")]
@@ -63,28 +63,7 @@ fn main() -> Result<()> {
     match cli.command {
         Commands::List => {
             let dev = connect_and_handshake()?;
-            let labels = commands::get_labels(&dev)?;
-            let configured: Vec<_> = labels.iter().filter(|s| !s.label.is_empty()).collect();
-
-            if configured.is_empty() {
-                println!("No configured slots.");
-                return Ok(());
-            }
-
-            let max_label = configured
-                .iter()
-                .map(|s| s.label.len())
-                .max()
-                .unwrap_or(5)
-                .max(5);
-
-            println!("┌────────┬─{}─┐", "─".repeat(max_label));
-            println!("│ {:6} │ {:max_label$} │", "Slot", "Label");
-            println!("├────────┼─{}─┤", "─".repeat(max_label));
-            for slot in &configured {
-                println!("│ {:6} │ {:max_label$} │", slot.name, slot.label);
-            }
-            println!("└────────┴─{}─┘", "─".repeat(max_label));
+            commands::cmd_list(&dev)
         }
 
         Commands::Set {
@@ -96,72 +75,19 @@ fn main() -> Result<()> {
             enter_after_password,
             no_enter_after_password,
         } => {
-            let slot_id = protocol::parse_slot(&slot)?;
-            let slot_name = protocol::slot_name(slot_id);
             let dev = connect_and_handshake()?;
-
-            if let Some(ref l) = label {
-                let resp = commands::set_slot_field(&dev, slot_id, MessageField::Label, l)?;
-                println!("Label set for slot {}. Device: {}", slot_name, resp);
-            }
-
-            if let Some(ref u) = username {
-                let resp = commands::set_slot_field(&dev, slot_id, MessageField::Username, u)?;
-                println!("Username set for slot {}. Device: {}", slot_name, resp);
-            }
-
-            if password {
-                let pw =
-                    rpassword::prompt_password(format!("Enter password for slot {}: ", slot_name))?;
-
-                if pw.is_empty() {
-                    anyhow::bail!("Password cannot be empty");
-                }
-
-                let resp = commands::set_slot_field(&dev, slot_id, MessageField::Password, &pw)?;
-                println!("Password set for slot {}. Device: {}", slot_name, resp);
-            }
-
-            if generate {
-                let pw = password::generate();
-                let resp = commands::set_slot_field(&dev, slot_id, MessageField::Password, &pw)?;
-                println!("Generated password: {}", pw);
-                println!("Password set for slot {}. Device: {}", slot_name, resp);
-            }
-
-            if enter_after_password {
-                let resp = commands::set_slot_field_raw(
-                    &dev,
-                    slot_id,
-                    MessageField::NextKey2,
-                    &[protocol::KEY_RETURN],
-                )?;
-                println!(
-                    "Enter-after-password enabled for slot {}. Device: {}",
-                    slot_name, resp
-                );
-            }
-
-            if no_enter_after_password {
-                let resp =
-                    commands::set_slot_field_raw(&dev, slot_id, MessageField::NextKey2, &[0])?;
-                println!(
-                    "Enter-after-password disabled for slot {}. Device: {}",
-                    slot_name, resp
-                );
-            }
-
-            if label.is_none()
-                && username.is_none()
-                && !password
-                && !generate
-                && !enter_after_password
-                && !no_enter_after_password
-            {
-                anyhow::bail!(
-                    "Nothing to set. Use --label, --username, --password, --generate, --enter-after-password, or --no-enter-after-password"
-                );
-            }
+            commands::cmd_set(
+                &dev,
+                &slot,
+                SetOptions {
+                    label,
+                    username,
+                    password,
+                    generate,
+                    enter_after_password,
+                    no_enter_after_password,
+                },
+            )
         }
 
         Commands::Wipe { slot } => {
@@ -177,13 +103,7 @@ fn main() -> Result<()> {
             }
 
             let dev = connect_and_handshake()?;
-            let responses = commands::wipe_slot(&dev, slot_id)?;
-            for r in &responses {
-                println!("{}", r);
-            }
-            println!("Slot {} wiped.", slot_name);
+            commands::cmd_wipe(&dev, &slot)
         }
     }
-
-    Ok(())
 }

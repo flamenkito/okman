@@ -80,7 +80,6 @@ pub fn parse_slot(s: &str) -> Result<u8, OnlyKeyError> {
     }
 }
 
-/// Human-readable name for a slot_id.
 pub fn slot_name(slot_id: u8) -> &'static str {
     match slot_id {
         1 => "1a",

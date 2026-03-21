@@ -107,16 +107,9 @@ impl OnlyKeyDevice {
         let epoch = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap()
-            .as_secs();
+            .as_secs() as u32;
 
-        let time_hex = format!("{:x}", epoch);
-        let time_bytes: Vec<u8> = (0..time_hex.len())
-            .step_by(2)
-            .map(|i| u8::from_str_radix(&time_hex[i..i + 2], 16).unwrap())
-            .collect();
-
-        self.send_message(Message::SetTime, None, None, &time_bytes)?;
-
+        self.send_message(Message::SetTime, None, None, &epoch.to_be_bytes())?;
         std::thread::sleep(Duration::from_millis(500));
 
         let response = self.read_string(READ_TIMEOUT_MS)?;
