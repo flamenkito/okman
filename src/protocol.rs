@@ -137,3 +137,95 @@ pub fn build_message(
 
     buf
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_slot_short_press() {
+        assert_eq!(parse_slot("1a").unwrap(), 1);
+        assert_eq!(parse_slot("3a").unwrap(), 3);
+        assert_eq!(parse_slot("6a").unwrap(), 6);
+    }
+
+    #[test]
+    fn parse_slot_long_press() {
+        assert_eq!(parse_slot("1b").unwrap(), 7);
+        assert_eq!(parse_slot("3b").unwrap(), 9);
+        assert_eq!(parse_slot("6b").unwrap(), 12);
+    }
+
+    #[test]
+    fn parse_slot_case_insensitive() {
+        assert_eq!(parse_slot("1A").unwrap(), 1);
+        assert_eq!(parse_slot("6B").unwrap(), 12);
+    }
+
+    #[test]
+    fn parse_slot_trims_whitespace() {
+        assert_eq!(parse_slot("  2a  ").unwrap(), 2);
+    }
+
+    #[test]
+    fn parse_slot_invalid() {
+        assert!(parse_slot("7a").is_err());
+        assert!(parse_slot("0a").is_err());
+        assert!(parse_slot("1c").is_err());
+        assert!(parse_slot("").is_err());
+        assert!(parse_slot("abc").is_err());
+    }
+
+    #[test]
+    fn slot_name_roundtrip() {
+        for id in 1..=12 {
+            let name = slot_name(id);
+            assert_eq!(parse_slot(name).unwrap(), id);
+        }
+    }
+
+    #[test]
+    fn slot_name_unknown() {
+        assert_eq!(slot_name(0), "unknown");
+        assert_eq!(slot_name(13), "unknown");
+        assert_eq!(slot_name(255), "unknown");
+    }
+
+    #[test]
+    fn build_message_header() {
+        let msg = build_message(Message::GetLabels, None, None, &[]);
+        assert_eq!(&msg[0..4], &[0xFF, 0xFF, 0xFF, 0xFF]);
+        assert_eq!(msg[4], 0xE5);
+        assert!(msg[5..].iter().all(|&b| b == 0));
+    }
+
+    #[test]
+    fn build_message_set_slot_with_payload() {
+        let msg = build_message(
+            Message::SetSlot,
+            Some(1),
+            Some(MessageField::Password),
+            b"hunter2",
+        );
+        assert_eq!(&msg[0..4], &[0xFF, 0xFF, 0xFF, 0xFF]);
+        assert_eq!(msg[4], 0xE6);
+        assert_eq!(msg[5], 1);
+        assert_eq!(msg[6], 5);
+        assert_eq!(&msg[7..14], b"hunter2");
+        assert!(msg[14..].iter().all(|&b| b == 0));
+    }
+
+    #[test]
+    fn build_message_is_64_bytes() {
+        let msg = build_message(Message::SetTime, None, None, &[0xAB; 100]);
+        assert_eq!(msg.len(), REPORT_SIZE);
+    }
+
+    #[test]
+    fn build_message_wipe_slot() {
+        let msg = build_message(Message::WipeSlot, Some(7), None, &[]);
+        assert_eq!(msg[4], 0xE7);
+        assert_eq!(msg[5], 7);
+        assert!(msg[6..].iter().all(|&b| b == 0));
+    }
+}
