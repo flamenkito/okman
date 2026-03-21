@@ -1,5 +1,11 @@
 # okman
 
+Rust CLI to manage OnlyKey slot passwords via USB HID.
+
+[![CI](https://github.com/flamenkito/okman/actions/workflows/rust.yml/badge.svg)](https://github.com/flamenkito/okman/actions/workflows/rust.yml)
+[![Crates.io](https://img.shields.io/crates/v/okman)](https://crates.io/crates/okman)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+
 ```
 Last login: Sat Mar 21 21:07:45 on ttys001
 user@MacBook ~ % okman list
@@ -14,8 +20,6 @@ Connected: UNLOCKEDv3.0.4-prodc
 └────────┴───────────┘
 user@MacBook ~ %
 ```
-
-Rust CLI to manage OnlyKey slot passwords via USB HID.
 
 ## Why okman?
 
