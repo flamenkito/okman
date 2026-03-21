@@ -1,0 +1,17 @@
+[package]
+name = "okman"
+version = "0.1.0"
+edition = "2021"
+description = "CLI manager for OnlyKey hardware security keys"
+license = "MIT"
+repository = "https://github.com/flamenkito/okman"
+readme = "README.md"
+keywords = ["onlykey", "cli", "hid", "usb", "security"]
+categories = ["command-line-utilities"]
+
+[dependencies]
+hidapi = { version = "2.6", features = ["macos-shared-device"] }
+clap = { version = "4", features = ["derive"] }
+rpassword = "7"
+anyhow = "1"
+thiserror = "2"
