@@ -1,10 +1,19 @@
 # okman
 
-<div align="center">
-  <img src="assets/terminal.svg" alt="okman list" width="520">
-</div>
-
-<br>
+```
+Last login: Sat Mar 21 21:07:45 on ttys001
+user@MacBook ~ % okman list
+Connecting to OnlyKey...
+Connected: UNLOCKEDv3.0.4-prodc
+┌────────┬───────────┐
+│ Slot   │ Label     │
+├────────┼───────────┤
+│ 1a     │ GitHub    │
+│ 2a     │ AWS       │
+│ 3b     │ VPN       │
+└────────┴───────────┘
+user@MacBook ~ %
+```
 
 Rust CLI to manage OnlyKey slot passwords via USB HID.
 
