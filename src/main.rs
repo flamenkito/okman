@@ -1,6 +1,7 @@
 mod commands;
 mod device;
 mod error;
+mod password;
 mod protocol;
 
 use anyhow::{Context, Result};
@@ -29,8 +30,11 @@ enum Commands {
         label: Option<String>,
         #[arg(long, short)]
         username: Option<String>,
-        #[arg(long, short)]
+        #[arg(long, short, conflicts_with = "generate")]
         password: bool,
+        /// Generate a random password (xxxxxx-xxxxxx-xxxxxx)
+        #[arg(long, short, conflicts_with = "password")]
+        generate: bool,
         #[arg(long, conflicts_with = "no_enter_after_password")]
         enter_after_password: bool,
         /// Disable pressing Enter after password
@@ -88,6 +92,7 @@ fn main() -> Result<()> {
             label,
             username,
             password,
+            generate,
             enter_after_password,
             no_enter_after_password,
         } => {
@@ -117,6 +122,13 @@ fn main() -> Result<()> {
                 println!("Password set for slot {}. Device: {}", slot_name, resp);
             }
 
+            if generate {
+                let pw = password::generate();
+                let resp = commands::set_slot_field(&dev, slot_id, MessageField::Password, &pw)?;
+                println!("Generated password: {}", pw);
+                println!("Password set for slot {}. Device: {}", slot_name, resp);
+            }
+
             if enter_after_password {
                 let resp = commands::set_slot_field_raw(
                     &dev,
@@ -142,11 +154,12 @@ fn main() -> Result<()> {
             if label.is_none()
                 && username.is_none()
                 && !password
+                && !generate
                 && !enter_after_password
                 && !no_enter_after_password
             {
                 anyhow::bail!(
-                    "Nothing to set. Use --label, --username, --password, --enter-after-password, or --no-enter-after-password"
+                    "Nothing to set. Use --label, --username, --password, --generate, --enter-after-password, or --no-enter-after-password"
                 );
             }
         }

@@ -69,6 +69,7 @@ Set slot fields (all flags are optional, but at least one is required):
 okman set 1a --label "GitHub" --username "alice@example.com"
 okman set 1a --password
 okman set 1a -l "GitHub" -u "alice" -p --enter-after-password
+okman set 1a --generate
 okman set 1a --no-enter-after-password
 okman set 2b -l "Bank"
 ```
