@@ -1,3 +1,5 @@
+use std::borrow::Cow;
+
 use crate::device::DeviceType;
 use crate::error::OnlyKeyError;
 
@@ -88,7 +90,6 @@ impl Profile {
         }
     }
 
-    #[allow(dead_code)]
     pub fn name(self) -> &'static str {
         match self {
             Profile::Green => "green",
@@ -97,19 +98,15 @@ impl Profile {
             Profile::Purple => "purple",
         }
     }
-}
 
-#[allow(dead_code)]
-pub fn parse_profile(s: &str) -> Result<Profile, OnlyKeyError> {
-    match s.trim().to_lowercase().as_str() {
-        "green" => Ok(Profile::Green),
-        "blue" => Ok(Profile::Blue),
-        "yellow" => Ok(Profile::Yellow),
-        "purple" => Ok(Profile::Purple),
-        other => Err(OnlyKeyError::InvalidSlot(format!(
-            "unknown profile '{}'. Valid profiles: green, blue, yellow, purple",
-            other
-        ))),
+    fn from_index(idx: u8) -> Option<Self> {
+        match idx {
+            0 => Some(Profile::Green),
+            1 => Some(Profile::Blue),
+            2 => Some(Profile::Yellow),
+            3 => Some(Profile::Purple),
+            _ => None,
+        }
     }
 }
 
@@ -173,10 +170,10 @@ fn parse_slot_duo(s: &str, profile: Profile) -> Result<u8, OnlyKeyError> {
     Ok(base + profile.offset())
 }
 
-pub fn slot_name(slot_id: u8, device_type: DeviceType) -> String {
+pub fn slot_name(slot_id: u8, device_type: DeviceType) -> Cow<'static, str> {
     match device_type {
-        DeviceType::Classic => slot_name_classic(slot_id).to_string(),
-        DeviceType::Duo => slot_name_duo(slot_id),
+        DeviceType::Classic => Cow::Borrowed(slot_name_classic(slot_id)),
+        DeviceType::Duo => Cow::Owned(slot_name_duo(slot_id)),
     }
 }
 
@@ -203,26 +200,24 @@ fn slot_name_duo(slot_id: u8) -> String {
         return "unknown".to_string();
     }
     let zero = slot_id - 1;
-    let profile_idx = zero / 6;
-    let within = zero % 6;
-    let profile = match profile_idx {
-        0 => "green",
-        1 => "blue",
-        2 => "yellow",
-        3 => "purple",
-        _ => return "unknown".to_string(),
+    let profile = match Profile::from_index(zero / 6) {
+        Some(p) => p,
+        None => return "unknown".to_string(),
     };
+    let within = zero % 6;
     let button = (within % 3) + 1;
     let press = if within < 3 { 'a' } else { 'b' };
-    format!("{} {}{}", profile, button, press)
+    format!("{} {}{}", profile.name(), button, press)
 }
 
-pub fn validate_pin(pin: &str) -> Result<(), String> {
+pub fn validate_pin(pin: &str) -> Result<(), OnlyKeyError> {
     if pin.len() < 7 || pin.len() > 10 {
-        return Err("PIN must be 7-10 digits".to_string());
+        return Err(OnlyKeyError::InvalidPin("must be 7-10 digits".to_string()));
     }
     if !pin.chars().all(|c| ('1'..='6').contains(&c)) {
-        return Err("PIN digits must be 1-6 only".to_string());
+        return Err(OnlyKeyError::InvalidPin(
+            "digits must be 1-6 only".to_string(),
+        ));
     }
     Ok(())
 }
@@ -233,7 +228,7 @@ pub fn encode_duo_pin(pin: &str) -> Vec<u8> {
         if i >= DUO_PIN_BLOCK_SIZE {
             break;
         }
-        buf[i] = 48 + ch.to_digit(10).unwrap_or(0) as u8;
+        buf[i] = b'0' + ch.to_digit(10).unwrap_or(0) as u8;
     }
     buf
 }
@@ -247,7 +242,7 @@ pub fn build_duo_init_payload(primary_pin: &str, sd_pin: &str) -> Vec<u8> {
 
 pub fn encode_duo_unlock_payload(pin: &str) -> Vec<u8> {
     pin.chars()
-        .map(|ch| 48 + ch.to_digit(10).unwrap_or(0) as u8)
+        .map(|ch| b'0' + ch.to_digit(10).unwrap_or(0) as u8)
         .collect()
 }
 
@@ -508,17 +503,12 @@ mod tests {
     }
 
     #[test]
-    fn parse_profile_valid() {
-        assert_eq!(parse_profile("green").unwrap(), Profile::Green);
-        assert_eq!(parse_profile("BLUE").unwrap(), Profile::Blue);
-        assert_eq!(parse_profile("  Yellow  ").unwrap(), Profile::Yellow);
-        assert_eq!(parse_profile("purple").unwrap(), Profile::Purple);
-    }
-
-    #[test]
-    fn parse_profile_invalid() {
-        assert!(parse_profile("red").is_err());
-        assert!(parse_profile("").is_err());
+    fn profile_from_index() {
+        assert_eq!(Profile::from_index(0), Some(Profile::Green));
+        assert_eq!(Profile::from_index(1), Some(Profile::Blue));
+        assert_eq!(Profile::from_index(2), Some(Profile::Yellow));
+        assert_eq!(Profile::from_index(3), Some(Profile::Purple));
+        assert_eq!(Profile::from_index(4), None);
     }
 
     #[test]
