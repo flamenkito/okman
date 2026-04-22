@@ -18,6 +18,9 @@ pub enum OnlyKeyError {
     #[error("Invalid slot: {0}")]
     InvalidSlot(String),
 
+    #[error("Invalid PIN: {0}")]
+    InvalidPin(String),
+
     #[error("HID error: {0}")]
     Hid(#[from] hidapi::HidError),
 

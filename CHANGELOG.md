@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.2.1
+
+### Fixed
+
+- DUO no-PIN mode — device returns `UNINITIALIZED...n` when configured without PIN; now correctly treated as unlocked
+- Slot table column width — dynamic sizing for DUO slot names (e.g. "green 1a")
+- Re-running `okman init` on an already-initialized no-PIN DUO now gives a clear error
+
+### Changed
+
+- `slot_name()` returns `Cow<'static, str>` to avoid allocation for Classic slot names
+- `validate_pin()` returns `Result<(), OnlyKeyError>` instead of `Result<(), String>`
+- Removed unused `parse_profile()` — profile parsing handled by clap `ValueEnum`
+- Replaced magic number `48` with `b'0'` in PIN encoding
+
 ## 0.2.0
 
 ### Added

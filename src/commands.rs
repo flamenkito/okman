@@ -40,7 +40,7 @@ pub fn get_labels(dev: &OnlyKeyDevice) -> Result<Vec<SlotLabel>, OnlyKeyError> {
 
         slots.push(SlotLabel {
             slot_id: slot_number,
-            name: protocol::slot_name(slot_number, dev.device_type),
+            name: protocol::slot_name(slot_number, dev.device_type).into_owned(),
             label,
         });
     }
@@ -103,6 +103,13 @@ pub fn cmd_list(dev: &OnlyKeyDevice, profile: Option<Profile>) -> Result<()> {
         return Ok(());
     }
 
+    let max_slot = configured
+        .iter()
+        .map(|s| s.name.len())
+        .max()
+        .unwrap_or(4)
+        .max(4);
+
     let max_label = configured
         .iter()
         .map(|s| s.label.len())
@@ -110,13 +117,13 @@ pub fn cmd_list(dev: &OnlyKeyDevice, profile: Option<Profile>) -> Result<()> {
         .unwrap_or(5)
         .max(5);
 
-    println!("┌────────┬─{}─┐", "─".repeat(max_label));
-    println!("│ {:6} │ {:max_label$} │", "Slot", "Label");
-    println!("├────────┼─{}─┤", "─".repeat(max_label));
+    println!("┌─{}─┬─{}─┐", "─".repeat(max_slot), "─".repeat(max_label));
+    println!("│ {:max_slot$} │ {:max_label$} │", "Slot", "Label");
+    println!("├─{}─┼─{}─┤", "─".repeat(max_slot), "─".repeat(max_label));
     for slot in &configured {
-        println!("│ {:6} │ {:max_label$} │", slot.name, slot.label);
+        println!("│ {:max_slot$} │ {:max_label$} │", slot.name, slot.label);
     }
-    println!("└────────┴─{}─┘", "─".repeat(max_label));
+    println!("└─{}─┴─{}─┘", "─".repeat(max_slot), "─".repeat(max_label));
 
     Ok(())
 }
@@ -373,6 +380,15 @@ fn pin_setup_step(dev: &OnlyKeyDevice, msg: Message, label: &str) -> Result<()> 
 pub fn cmd_init(dev: &OnlyKeyDevice) -> Result<()> {
     let response = dev.handshake_raw()?;
 
+    let is_duo_no_pin = dev.device_type == DeviceType::Duo && response.ends_with('n');
+
+    if is_duo_no_pin {
+        anyhow::bail!(
+            "Device is already initialized (no PIN, always unlocked). \
+             Factory reset the device to re-initialize."
+        );
+    }
+
     if !response.contains("UNINITIALIZED") {
         if response.contains("UNLOCKED") {
             anyhow::bail!(
@@ -411,7 +427,7 @@ fn prompt_and_confirm_pin(label: &str) -> Result<String> {
     loop {
         let pin = rpassword::prompt_password(format!("{} (7-10 digits, 1-6 only): ", label))?;
         if let Err(e) = protocol::validate_pin(&pin) {
-            eprintln!("Error: {}", e);
+            eprintln!("{}", e);
             continue;
         }
         let confirm = rpassword::prompt_password(format!("Confirm {}: ", label))?;

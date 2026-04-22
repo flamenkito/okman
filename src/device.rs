@@ -143,6 +143,11 @@ impl OnlyKeyDevice {
         let response = self.handshake_raw()?;
 
         if response.contains("UNINITIALIZED") {
+            // DUO without PIN reports "UNINITIALIZEDv...-prodn" — the 'n' suffix
+            // means no PIN is set but the device is configured and usable.
+            if self.device_type == DeviceType::Duo && response.ends_with('n') {
+                return Ok(response);
+            }
             return Err(OnlyKeyError::DeviceUninitialized);
         }
         if response.contains("INITIALIZED") {
