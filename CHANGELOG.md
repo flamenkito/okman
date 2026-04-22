@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.2.2
+
+### Changed
+
+- `okman set` now requires `--label` when setting a password on a slot that doesn't have one — the device only reports labels, so unlabeled slots are invisible to `okman list`
+
 ## 0.2.1
 
 ### Fixed

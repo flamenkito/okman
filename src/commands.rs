@@ -32,11 +32,11 @@ pub fn get_labels(dev: &OnlyKeyDevice) -> Result<Vec<SlotLabel>, OnlyKeyError> {
             slot_number -= 6;
         }
 
+        let label = parts[1].replace('\u{00FF}', " ").trim().to_string();
+
         if !(1..=max_slots).contains(&slot_number) {
             continue;
         }
-
-        let label = parts[1].replace('\u{00FF}', " ").trim().to_string();
 
         slots.push(SlotLabel {
             slot_id: slot_number,
@@ -137,6 +137,10 @@ pub struct SetOptions {
     pub no_enter_after_password: bool,
 }
 
+fn requires_label(opts: &SetOptions) -> bool {
+    (opts.password.is_some() || opts.generate) && opts.label.is_none()
+}
+
 pub fn cmd_set(
     dev: &OnlyKeyDevice,
     slot: &str,
@@ -153,6 +157,20 @@ pub fn cmd_set(
         anyhow::bail!(
             "Nothing to set. Use --label, --username, --password, --generate, --enter-after-password, or --no-enter-after-password"
         );
+    }
+
+    if requires_label(&opts) {
+        let labels = get_labels(dev)?;
+        let slot_id = protocol::parse_slot(slot, dev.device_type, profile)?;
+        let has_label = labels
+            .iter()
+            .any(|s| s.slot_id == slot_id && !s.label.is_empty());
+        if !has_label {
+            anyhow::bail!(
+                "A --label is required when setting a password on a slot without one. \
+                 The device only reports labels, so unlabeled slots are invisible to 'okman list'."
+            );
+        }
     }
 
     let slot_id = protocol::parse_slot(slot, dev.device_type, profile)?;
@@ -650,5 +668,50 @@ mod tests {
         assert_eq!(config_slot_id(MessageField::StoredChallengeMode), 1);
         assert_eq!(config_slot_id(MessageField::HmacMode), 1);
         assert_eq!(config_slot_id(MessageField::SecProfileMode), 1);
+    }
+
+    fn make_opts(label: Option<&str>, password: Option<&str>, generate: bool) -> SetOptions {
+        SetOptions {
+            label: label.map(|s| s.to_string()),
+            username: None,
+            password: password.map(|s| s.to_string()),
+            generate,
+            enter_after_password: false,
+            no_enter_after_password: false,
+        }
+    }
+
+    #[test]
+    fn requires_label_password_without_label() {
+        assert!(requires_label(&make_opts(None, Some("secret"), false)));
+    }
+
+    #[test]
+    fn requires_label_generate_without_label() {
+        assert!(requires_label(&make_opts(None, None, true)));
+    }
+
+    #[test]
+    fn requires_label_password_with_label() {
+        assert!(!requires_label(&make_opts(
+            Some("GitHub"),
+            Some("secret"),
+            false
+        )));
+    }
+
+    #[test]
+    fn requires_label_generate_with_label() {
+        assert!(!requires_label(&make_opts(Some("GitHub"), None, true)));
+    }
+
+    #[test]
+    fn requires_label_no_password_no_label() {
+        assert!(!requires_label(&make_opts(None, None, false)));
+    }
+
+    #[test]
+    fn requires_label_label_only() {
+        assert!(!requires_label(&make_opts(Some("GitHub"), None, false)));
     }
 }
