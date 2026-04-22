@@ -9,8 +9,26 @@ const READ_TIMEOUT_MS: i32 = 1000;
 const CONNECT_RETRIES: u32 = 5;
 const RETRY_DELAY: Duration = Duration::from_millis(1500);
 
+const DUO_SERIAL: &str = "1000000000";
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DeviceType {
+    Classic,
+    Duo,
+}
+
+impl std::fmt::Display for DeviceType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            DeviceType::Classic => write!(f, "OnlyKey"),
+            DeviceType::Duo => write!(f, "OnlyKey DUO"),
+        }
+    }
+}
+
 pub struct OnlyKeyDevice {
     hid: HidDevice,
+    pub device_type: DeviceType,
 }
 
 impl OnlyKeyDevice {
@@ -52,9 +70,8 @@ impl OnlyKeyDevice {
             let usage_page = info.usage_page();
             let iface = info.interface_number();
 
-            // Match the correct HID interface based on serial number,
-            // mirroring the Python client's logic.
-            let matches = if serial == "1000000000" {
+            let is_duo = serial == DUO_SERIAL;
+            let matches = if is_duo {
                 usage_page == 0xFFAB || iface == 2
             } else {
                 usage_page == 0xF1D0 || iface == 1
@@ -62,7 +79,12 @@ impl OnlyKeyDevice {
 
             if matches {
                 let hid = info.open_device(api)?;
-                return Ok(Self { hid });
+                let device_type = if is_duo {
+                    DeviceType::Duo
+                } else {
+                    DeviceType::Classic
+                };
+                return Ok(Self { hid, device_type });
             }
         }
 
@@ -101,9 +123,9 @@ impl OnlyKeyDevice {
         self.write(&buf)
     }
 
-    /// Send OKSETTIME and verify the device is unlocked.
-    /// Returns the firmware version string on success.
-    pub fn handshake(&self) -> Result<String, OnlyKeyError> {
+    /// Send OKSETTIME and return the raw response string.
+    /// Does not interpret the response — caller decides what to do with it.
+    pub fn handshake_raw(&self) -> Result<String, OnlyKeyError> {
         let epoch = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap()
@@ -112,7 +134,13 @@ impl OnlyKeyDevice {
         self.send_message(Message::SetTime, None, None, &epoch.to_be_bytes())?;
         std::thread::sleep(Duration::from_millis(500));
 
-        let response = self.read_string(READ_TIMEOUT_MS)?;
+        self.read_string(READ_TIMEOUT_MS)
+    }
+
+    /// Send OKSETTIME and verify the device is unlocked.
+    /// Returns the firmware version string on success.
+    pub fn handshake(&self) -> Result<String, OnlyKeyError> {
+        let response = self.handshake_raw()?;
 
         if response.contains("UNINITIALIZED") {
             return Err(OnlyKeyError::DeviceUninitialized);

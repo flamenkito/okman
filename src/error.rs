@@ -5,17 +5,17 @@ pub enum OnlyKeyError {
     #[error("No OnlyKey device found. Is it plugged in?")]
     DeviceNotFound,
 
-    #[error("OnlyKey is locked. Please enter your PIN on the device first.")]
+    #[error("OnlyKey is locked")]
     DeviceLocked,
 
-    #[error("OnlyKey has no PIN set. Please set up your device first using the OnlyKey App.")]
+    #[error("OnlyKey has no PIN set")]
     DeviceUninitialized,
 
     #[allow(dead_code)]
     #[error("Timed out waiting for OnlyKey response.")]
     Timeout,
 
-    #[error("Invalid slot: {0}. Valid slots: 1a-6a (short press) or 1b-6b (long press)")]
+    #[error("Invalid slot: {0}")]
     InvalidSlot(String),
 
     #[error("HID error: {0}")]

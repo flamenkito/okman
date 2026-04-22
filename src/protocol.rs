@@ -1,3 +1,4 @@
+use crate::device::DeviceType;
 use crate::error::OnlyKeyError;
 
 /// HID report size (excluding Windows leading 0x00).
@@ -25,6 +26,7 @@ pub enum Message {
     GetLabels = 0xE5,
     SetSlot = 0xE6,
     WipeSlot = 0xE7,
+    SetPriv = 0xEF,
 }
 
 /// Field identifiers for `SetSlot` messages.
@@ -51,17 +53,85 @@ pub enum MessageField {
     Delay1 = 17,
     NextKey4 = 18,
     NextKey5 = 19,
+    BackupMode = 20,
+    DerivedChallengeMode = 21,
+    StoredChallengeMode = 22,
+    SecProfileMode = 23,
+    LedBrightness = 24,
+    LockButton = 25,
+    HmacMode = 26,
+    SysadminMode = 27,
+    TouchSense = 28,
 }
 
-/// USB HID keyboard Return/Enter scan code used for NextKey fields.
-pub const KEY_RETURN: u8 = 128;
+/// OnlyKey "additional character" code for Return/Enter in NextKey fields.
+/// Protocol values: 0 = none, 1 = Tab, 2 = Return.
+pub const KEY_RETURN: u8 = 2;
 
-/// Parse a slot name like "1a", "3b" etc. into the numeric slot_id used by the protocol.
-///
-/// OnlyKey (non-DUO) slot mapping:
-/// - 1a..6a → slot_id 1..6  (short press)
-/// - 1b..6b → slot_id 7..12 (long press)
-pub fn parse_slot(s: &str) -> Result<u8, OnlyKeyError> {
+const DUO_PIN_BLOCK_SIZE: usize = 16;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Profile {
+    Green,
+    Blue,
+    Yellow,
+    Purple,
+}
+
+impl Profile {
+    pub fn offset(self) -> u8 {
+        match self {
+            Profile::Green => 0,
+            Profile::Blue => 6,
+            Profile::Yellow => 12,
+            Profile::Purple => 18,
+        }
+    }
+
+    #[allow(dead_code)]
+    pub fn name(self) -> &'static str {
+        match self {
+            Profile::Green => "green",
+            Profile::Blue => "blue",
+            Profile::Yellow => "yellow",
+            Profile::Purple => "purple",
+        }
+    }
+}
+
+#[allow(dead_code)]
+pub fn parse_profile(s: &str) -> Result<Profile, OnlyKeyError> {
+    match s.trim().to_lowercase().as_str() {
+        "green" => Ok(Profile::Green),
+        "blue" => Ok(Profile::Blue),
+        "yellow" => Ok(Profile::Yellow),
+        "purple" => Ok(Profile::Purple),
+        other => Err(OnlyKeyError::InvalidSlot(format!(
+            "unknown profile '{}'. Valid profiles: green, blue, yellow, purple",
+            other
+        ))),
+    }
+}
+
+pub fn slot_count(device_type: DeviceType) -> u8 {
+    match device_type {
+        DeviceType::Classic => 12,
+        DeviceType::Duo => 24,
+    }
+}
+
+pub fn parse_slot(
+    s: &str,
+    device_type: DeviceType,
+    profile: Option<Profile>,
+) -> Result<u8, OnlyKeyError> {
+    match device_type {
+        DeviceType::Classic => parse_slot_classic(s),
+        DeviceType::Duo => parse_slot_duo(s, profile.unwrap_or(Profile::Green)),
+    }
+}
+
+fn parse_slot_classic(s: &str) -> Result<u8, OnlyKeyError> {
     let s = s.trim().to_lowercase();
     match s.as_str() {
         "1a" => Ok(1),
@@ -76,11 +146,41 @@ pub fn parse_slot(s: &str) -> Result<u8, OnlyKeyError> {
         "4b" => Ok(10),
         "5b" => Ok(11),
         "6b" => Ok(12),
-        _ => Err(OnlyKeyError::InvalidSlot(s)),
+        _ => Err(OnlyKeyError::InvalidSlot(format!(
+            "'{s}'. Valid Classic slots: 1a-6a (short press) or 1b-6b (long press)"
+        ))),
     }
 }
 
-pub fn slot_name(slot_id: u8) -> &'static str {
+/// DUO slot mapping (from OnlyKey App getSlotNum):
+///   1a-3a → short press → N + profile_offset
+///   1b-3b → long press  → N + 3 + profile_offset
+fn parse_slot_duo(s: &str, profile: Profile) -> Result<u8, OnlyKeyError> {
+    let s = s.trim().to_lowercase();
+    let base = match s.as_str() {
+        "1a" => 1,
+        "2a" => 2,
+        "3a" => 3,
+        "1b" => 4,
+        "2b" => 5,
+        "3b" => 6,
+        _ => {
+            return Err(OnlyKeyError::InvalidSlot(format!(
+                "'{s}'. Valid DUO slots: 1a-3a (short press) or 1b-3b (long press)"
+            )));
+        }
+    };
+    Ok(base + profile.offset())
+}
+
+pub fn slot_name(slot_id: u8, device_type: DeviceType) -> String {
+    match device_type {
+        DeviceType::Classic => slot_name_classic(slot_id).to_string(),
+        DeviceType::Duo => slot_name_duo(slot_id),
+    }
+}
+
+fn slot_name_classic(slot_id: u8) -> &'static str {
     match slot_id {
         1 => "1a",
         2 => "2a",
@@ -96,6 +196,69 @@ pub fn slot_name(slot_id: u8) -> &'static str {
         12 => "6b",
         _ => "unknown",
     }
+}
+
+fn slot_name_duo(slot_id: u8) -> String {
+    if slot_id == 0 || slot_id > 24 {
+        return "unknown".to_string();
+    }
+    let zero = slot_id - 1;
+    let profile_idx = zero / 6;
+    let within = zero % 6;
+    let profile = match profile_idx {
+        0 => "green",
+        1 => "blue",
+        2 => "yellow",
+        3 => "purple",
+        _ => return "unknown".to_string(),
+    };
+    let button = (within % 3) + 1;
+    let press = if within < 3 { 'a' } else { 'b' };
+    format!("{} {}{}", profile, button, press)
+}
+
+pub fn validate_pin(pin: &str) -> Result<(), String> {
+    if pin.len() < 7 || pin.len() > 10 {
+        return Err("PIN must be 7-10 digits".to_string());
+    }
+    if !pin.chars().all(|c| ('1'..='6').contains(&c)) {
+        return Err("PIN digits must be 1-6 only".to_string());
+    }
+    Ok(())
+}
+
+pub fn encode_duo_pin(pin: &str) -> Vec<u8> {
+    let mut buf = vec![0u8; DUO_PIN_BLOCK_SIZE];
+    for (i, ch) in pin.chars().enumerate() {
+        if i >= DUO_PIN_BLOCK_SIZE {
+            break;
+        }
+        buf[i] = 48 + ch.to_digit(10).unwrap_or(0) as u8;
+    }
+    buf
+}
+
+pub fn build_duo_init_payload(primary_pin: &str, sd_pin: &str) -> Vec<u8> {
+    let mut payload = vec![0xFF];
+    payload.extend(encode_duo_pin(primary_pin));
+    payload.extend(encode_duo_pin(sd_pin));
+    payload
+}
+
+pub fn encode_duo_unlock_payload(pin: &str) -> Vec<u8> {
+    pin.chars()
+        .map(|ch| 48 + ch.to_digit(10).unwrap_or(0) as u8)
+        .collect()
+}
+
+pub const BACKUP_KEY_SLOT: u8 = 131;
+pub const BACKUP_KEY_TYPE: u8 = 161;
+
+pub fn hash_backup_passphrase(passphrase: &str) -> Vec<u8> {
+    use sha2::{Digest, Sha256};
+    let mut hasher = Sha256::new();
+    hasher.update(passphrase.as_bytes());
+    hasher.finalize().to_vec()
 }
 
 /// Build a 64-byte HID message.
@@ -141,53 +304,221 @@ pub fn build_message(
 mod tests {
     use super::*;
 
+    const CLASSIC: DeviceType = DeviceType::Classic;
+    const DUO: DeviceType = DeviceType::Duo;
+
     #[test]
     fn parse_slot_short_press() {
-        assert_eq!(parse_slot("1a").unwrap(), 1);
-        assert_eq!(parse_slot("3a").unwrap(), 3);
-        assert_eq!(parse_slot("6a").unwrap(), 6);
+        assert_eq!(parse_slot("1a", CLASSIC, None).unwrap(), 1);
+        assert_eq!(parse_slot("3a", CLASSIC, None).unwrap(), 3);
+        assert_eq!(parse_slot("6a", CLASSIC, None).unwrap(), 6);
     }
 
     #[test]
     fn parse_slot_long_press() {
-        assert_eq!(parse_slot("1b").unwrap(), 7);
-        assert_eq!(parse_slot("3b").unwrap(), 9);
-        assert_eq!(parse_slot("6b").unwrap(), 12);
+        assert_eq!(parse_slot("1b", CLASSIC, None).unwrap(), 7);
+        assert_eq!(parse_slot("3b", CLASSIC, None).unwrap(), 9);
+        assert_eq!(parse_slot("6b", CLASSIC, None).unwrap(), 12);
     }
 
     #[test]
     fn parse_slot_case_insensitive() {
-        assert_eq!(parse_slot("1A").unwrap(), 1);
-        assert_eq!(parse_slot("6B").unwrap(), 12);
+        assert_eq!(parse_slot("1A", CLASSIC, None).unwrap(), 1);
+        assert_eq!(parse_slot("6B", CLASSIC, None).unwrap(), 12);
     }
 
     #[test]
     fn parse_slot_trims_whitespace() {
-        assert_eq!(parse_slot("  2a  ").unwrap(), 2);
+        assert_eq!(parse_slot("  2a  ", CLASSIC, None).unwrap(), 2);
     }
 
     #[test]
     fn parse_slot_invalid() {
-        assert!(parse_slot("7a").is_err());
-        assert!(parse_slot("0a").is_err());
-        assert!(parse_slot("1c").is_err());
-        assert!(parse_slot("").is_err());
-        assert!(parse_slot("abc").is_err());
+        assert!(parse_slot("7a", CLASSIC, None).is_err());
+        assert!(parse_slot("0a", CLASSIC, None).is_err());
+        assert!(parse_slot("1c", CLASSIC, None).is_err());
+        assert!(parse_slot("", CLASSIC, None).is_err());
+        assert!(parse_slot("abc", CLASSIC, None).is_err());
     }
 
     #[test]
-    fn slot_name_roundtrip() {
+    fn slot_name_classic_roundtrip() {
         for id in 1..=12 {
-            let name = slot_name(id);
-            assert_eq!(parse_slot(name).unwrap(), id);
+            let name = slot_name(id, CLASSIC);
+            assert_eq!(parse_slot(&name, CLASSIC, None).unwrap(), id);
         }
     }
 
     #[test]
     fn slot_name_unknown() {
-        assert_eq!(slot_name(0), "unknown");
-        assert_eq!(slot_name(13), "unknown");
-        assert_eq!(slot_name(255), "unknown");
+        assert_eq!(slot_name(0, CLASSIC), "unknown");
+        assert_eq!(slot_name(13, CLASSIC), "unknown");
+        assert_eq!(slot_name(255, CLASSIC), "unknown");
+    }
+
+    #[test]
+    fn duo_parse_slot_green() {
+        assert_eq!(parse_slot("1a", DUO, Some(Profile::Green)).unwrap(), 1);
+        assert_eq!(parse_slot("2a", DUO, Some(Profile::Green)).unwrap(), 2);
+        assert_eq!(parse_slot("3a", DUO, Some(Profile::Green)).unwrap(), 3);
+        assert_eq!(parse_slot("1b", DUO, Some(Profile::Green)).unwrap(), 4);
+        assert_eq!(parse_slot("2b", DUO, Some(Profile::Green)).unwrap(), 5);
+        assert_eq!(parse_slot("3b", DUO, Some(Profile::Green)).unwrap(), 6);
+    }
+
+    #[test]
+    fn duo_parse_slot_blue() {
+        assert_eq!(parse_slot("1a", DUO, Some(Profile::Blue)).unwrap(), 7);
+        assert_eq!(parse_slot("3b", DUO, Some(Profile::Blue)).unwrap(), 12);
+    }
+
+    #[test]
+    fn duo_parse_slot_yellow() {
+        assert_eq!(parse_slot("1a", DUO, Some(Profile::Yellow)).unwrap(), 13);
+        assert_eq!(parse_slot("3b", DUO, Some(Profile::Yellow)).unwrap(), 18);
+    }
+
+    #[test]
+    fn duo_parse_slot_purple() {
+        assert_eq!(parse_slot("1a", DUO, Some(Profile::Purple)).unwrap(), 19);
+        assert_eq!(parse_slot("3b", DUO, Some(Profile::Purple)).unwrap(), 24);
+    }
+
+    #[test]
+    fn duo_parse_slot_invalid() {
+        assert!(parse_slot("4a", DUO, Some(Profile::Green)).is_err());
+        assert!(parse_slot("6b", DUO, Some(Profile::Green)).is_err());
+    }
+
+    #[test]
+    fn duo_slot_name_green() {
+        assert_eq!(slot_name(1, DUO), "green 1a");
+        assert_eq!(slot_name(4, DUO), "green 1b");
+        assert_eq!(slot_name(6, DUO), "green 3b");
+    }
+
+    #[test]
+    fn duo_slot_name_purple() {
+        assert_eq!(slot_name(19, DUO), "purple 1a");
+        assert_eq!(slot_name(24, DUO), "purple 3b");
+    }
+
+    #[test]
+    fn duo_slot_name_unknown() {
+        assert_eq!(slot_name(0, DUO), "unknown");
+        assert_eq!(slot_name(25, DUO), "unknown");
+    }
+
+    #[test]
+    fn profile_offsets() {
+        assert_eq!(Profile::Green.offset(), 0);
+        assert_eq!(Profile::Blue.offset(), 6);
+        assert_eq!(Profile::Yellow.offset(), 12);
+        assert_eq!(Profile::Purple.offset(), 18);
+    }
+
+    #[test]
+    fn slot_count_values() {
+        assert_eq!(slot_count(CLASSIC), 12);
+        assert_eq!(slot_count(DUO), 24);
+    }
+
+    #[test]
+    fn validate_pin_valid() {
+        assert!(validate_pin("1234561").is_ok());
+        assert!(validate_pin("1111111111").is_ok());
+        assert!(validate_pin("6543216").is_ok());
+    }
+
+    #[test]
+    fn validate_pin_too_short() {
+        assert!(validate_pin("123456").is_err());
+        assert!(validate_pin("").is_err());
+    }
+
+    #[test]
+    fn validate_pin_too_long() {
+        assert!(validate_pin("12345611111").is_err());
+    }
+
+    #[test]
+    fn validate_pin_invalid_digits() {
+        assert!(validate_pin("1234567890").is_err());
+        assert!(validate_pin("1234560").is_err());
+        assert!(validate_pin("7777777").is_err());
+    }
+
+    #[test]
+    fn encode_duo_pin_padded() {
+        let encoded = encode_duo_pin("123");
+        assert_eq!(encoded.len(), 16);
+        assert_eq!(encoded[0], 49);
+        assert_eq!(encoded[1], 50);
+        assert_eq!(encoded[2], 51);
+        assert!(encoded[3..].iter().all(|&b| b == 0));
+    }
+
+    #[test]
+    fn encode_duo_pin_full() {
+        let encoded = encode_duo_pin("1234561234");
+        assert_eq!(encoded.len(), 16);
+        assert_eq!(encoded[0], 49);
+        assert_eq!(encoded[9], 52);
+        assert!(encoded[10..].iter().all(|&b| b == 0));
+    }
+
+    #[test]
+    fn build_duo_init_payload_format() {
+        let payload = build_duo_init_payload("1234561", "6543211");
+        assert_eq!(payload.len(), 33);
+        assert_eq!(payload[0], 0xFF);
+        assert_eq!(payload[1], 49);
+        assert_eq!(payload[17], 54);
+    }
+
+    #[test]
+    fn encode_duo_unlock_no_padding() {
+        let payload = encode_duo_unlock_payload("123");
+        assert_eq!(payload.len(), 3);
+        assert_eq!(payload, vec![49, 50, 51]);
+    }
+
+    #[test]
+    fn hash_backup_passphrase_is_32_bytes() {
+        let hash = hash_backup_passphrase("abcdefghijklmnopqrstuvwxy");
+        assert_eq!(hash.len(), 32);
+    }
+
+    #[test]
+    fn hash_backup_passphrase_deterministic() {
+        let h1 = hash_backup_passphrase("test passphrase for onlykey");
+        let h2 = hash_backup_passphrase("test passphrase for onlykey");
+        assert_eq!(h1, h2);
+    }
+
+    #[test]
+    fn set_priv_message_format() {
+        let mut payload = vec![BACKUP_KEY_TYPE];
+        payload.extend(vec![0xAA; 32]);
+        let msg = build_message(Message::SetPriv, Some(BACKUP_KEY_SLOT), None, &payload);
+        assert_eq!(msg[4], 0xEF);
+        assert_eq!(msg[5], 131);
+        assert_eq!(msg[6], 161);
+        assert_eq!(msg[7], 0xAA);
+    }
+
+    #[test]
+    fn parse_profile_valid() {
+        assert_eq!(parse_profile("green").unwrap(), Profile::Green);
+        assert_eq!(parse_profile("BLUE").unwrap(), Profile::Blue);
+        assert_eq!(parse_profile("  Yellow  ").unwrap(), Profile::Yellow);
+        assert_eq!(parse_profile("purple").unwrap(), Profile::Purple);
+    }
+
+    #[test]
+    fn parse_profile_invalid() {
+        assert!(parse_profile("red").is_err());
+        assert!(parse_profile("").is_err());
     }
 
     #[test]
@@ -226,5 +557,67 @@ mod tests {
         assert_eq!(msg[4], 0xE7);
         assert_eq!(msg[5], 7);
         assert!(msg[6..].iter().all(|&b| b == 0));
+    }
+
+    #[test]
+    fn build_message_set_pin() {
+        let msg = build_message(Message::SetPin, None, None, &[]);
+        assert_eq!(&msg[0..4], &MESSAGE_HEADER);
+        assert_eq!(msg[4], 0xE1);
+        assert!(msg[5..].iter().all(|&b| b == 0));
+    }
+
+    #[test]
+    fn build_message_set_sd_pin() {
+        let msg = build_message(Message::SetSdPin, None, None, &[]);
+        assert_eq!(msg[4], 0xE2);
+    }
+
+    #[test]
+    fn build_message_set_pd_pin() {
+        let msg = build_message(Message::SetPdPin, None, None, &[]);
+        assert_eq!(msg[4], 0xE3);
+    }
+
+    #[test]
+    fn message_field_new_variants_repr() {
+        assert_eq!(MessageField::BackupMode as u8, 20);
+        assert_eq!(MessageField::DerivedChallengeMode as u8, 21);
+        assert_eq!(MessageField::StoredChallengeMode as u8, 22);
+        assert_eq!(MessageField::SecProfileMode as u8, 23);
+        assert_eq!(MessageField::LedBrightness as u8, 24);
+        assert_eq!(MessageField::LockButton as u8, 25);
+        assert_eq!(MessageField::HmacMode as u8, 26);
+        assert_eq!(MessageField::SysadminMode as u8, 27);
+        assert_eq!(MessageField::TouchSense as u8, 28);
+    }
+
+    #[test]
+    fn build_message_config_led_brightness() {
+        let msg = build_message(
+            Message::SetSlot,
+            Some(1),
+            Some(MessageField::LedBrightness),
+            &[128],
+        );
+        assert_eq!(msg[4], 0xE6);
+        assert_eq!(msg[5], 1);
+        assert_eq!(msg[6], 24);
+        assert_eq!(msg[7], 128);
+        assert!(msg[8..].iter().all(|&b| b == 0));
+    }
+
+    #[test]
+    fn build_message_config_type_speed_slot_zero() {
+        let msg = build_message(
+            Message::SetSlot,
+            Some(0),
+            Some(MessageField::KeyTypeSpeed),
+            &[4],
+        );
+        assert_eq!(msg[4], 0xE6);
+        assert_eq!(msg[5], 0);
+        assert_eq!(msg[6], 13);
+        assert_eq!(msg[7], 4);
     }
 }
